@@ -1,42 +1,53 @@
 import express from "express";
-import bodyParser from "body-parser";
-import { writeFileSync } from "fs";
-import path from "path";
+import fs from "fs";
 import fetch from "node-fetch";
 import { exec } from "child_process";
+import { promisify } from "util";
+import { fileURLToPath } from "url";
+import path from "path";
+import gtts from "gtts";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(bodyParser.json());
-const PORT = process.env.PORT || 3000;
+const execAsync = promisify(exec);
+app.use(express.json());
 
-// 生成视频的路由
 app.post("/generate", async (req, res) => {
-  const text = req.body.text || "你好，这是一个自动生成的视频示例。";
-
   try {
-    const outputFile = path.join("/tmp", "output.mp4");
+    const text = req.body.text || "你好，这是一个测试视频。";
+    const bgUrl = "https://picsum.photos/720/1280"; // 随机背景
+    const bgFile = path.join(__dirname, "bg.jpg");
+    const voiceFile = path.join(__dirname, "voice.mp3");
+    const outputFile = path.join(__dirname, `video_${Date.now()}.mp4`);
 
-    // 用 openai 的免费接口生成语音（无需 API 密钥）
-    const ttsUrl = `https://api.voicerss.org/?key=demo&hl=zh-cn&src=${encodeURIComponent(text)}`;
-    const ttsRes = await fetch(ttsUrl);
-    const audioPath = path.join("/tmp", "voice.mp3");
-    const audioBuffer = await ttsRes.arrayBuffer();
-    writeFileSync(audioPath, Buffer.from(audioBuffer));
+    // 下载背景图
+    const response = await fetch(bgUrl);
+    const buffer = await response.arrayBuffer();
+    fs.writeFileSync(bgFile, Buffer.from(buffer));
 
-    // 使用 ffmpeg 生成视频（背景 + 字幕 + 音频）
+    // 生成中文语音
+    const speech = new gtts(text, "zh");
+    await new Promise((resolve, reject) => {
+      speech.save(voiceFile, err => (err ? reject(err) : resolve()));
+    });
+
+    // 生成视频命令（竖屏+字幕）
     const ffmpegCmd = `
-      ffmpeg -loop 1 -i https://picsum.photos/720/1280 \
-      -i ${audioPath} -vf "drawtext=text='${text}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=h-100" \
-      -t 10 -pix_fmt yuv420p ${outputFile} -y
+      ffmpeg -loop 1 -i ${bgFile} -i ${voiceFile} \
+      -vf "subtitles='sub.srt':force_style='FontName=SimHei,FontSize=24,PrimaryColour=&HFFFFFF&'" \
+      -t 20 -c:v libx264 -c:a aac -strict experimental -shortest ${outputFile}
     `;
 
-    exec(ffmpegCmd, (err) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.sendFile(outputFile);
+    await execAsync(ffmpegCmd);
+
+    res.json({
+      message: "✅ 视频生成成功！",
+      video_url: `https://${process.env.RAILWAY_STATIC_URL || req.headers.host}/${path.basename(outputFile)}`
     });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on ${PORT}`));
+app.listen(3000, () => console.log("🎬 视频生成服务已启动 on port 3000"));
