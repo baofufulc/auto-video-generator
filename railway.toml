@@ -1,11 +1,14 @@
 [build]
-builder = "NIXPACKS"
+builder = "heroku/buildpacks:20"
 
-[build.packages]
-apt = ["ffmpeg"]
+[build.buildpacks]
+url = "https://github.com/jonathanong/heroku-buildpack-ffmpeg-latest.git"
 
-[env]
+[[build.buildpacks]]
+url = "heroku/nodejs"
+
+[build.env]
 NODE_ENV = "production"
 
-[start]
-cmd = "node server.js"
+[deploy]
+startCommand = "node server.js"
