@@ -1,6 +1,9 @@
 [build]
 builder = "NIXPACKS"
 
+[build.packages]
+apt = ["ffmpeg"]
+
 [env]
 NODE_ENV = "production"
 
