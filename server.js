@@ -1,58 +1,81 @@
 import express from "express";
 import fs from "fs";
+import path from "path";
+import googleTTS from "google-tts-api";
 import fetch from "node-fetch";
 import { exec } from "child_process";
-import { promisify } from "util";
-import { fileURLToPath } from "url";
-import path from "path";
-import gtts from "gtts";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const execAsync = promisify(exec);
 app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
 
 app.post("/generate", async (req, res) => {
   try {
-    const text = req.body.text || "你好，这是一个测试视频。";
-    const bgUrl = "https://picsum.photos/720/1280";
-    const bgFile = path.join(__dirname, "bg.jpg");
-    const voiceFile = path.join(__dirname, "voice.mp3");
-    const outputFile = path.join(__dirname, `video_${Date.now()}.mp4`);
+    const text = req.body.text;
+    if (!text) {
+      return res.status(400).json({ error: "❌ 请提供文本内容 text" });
+    }
 
-    // 下载图片
-    const response = await fetch(bgUrl);
-    const buffer = await response.arrayBuffer();
-    fs.writeFileSync(bgFile, Buffer.from(buffer));
+    // 创建工作目录
+    const outputDir = "./output";
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
-    // 生成语音
-    const speech = new gtts(text, "zh");
+    const timestamp = Date.now();
+    const voiceFile = path.join(outputDir, `voice_${timestamp}.mp3`);
+    const videoFile = path.join(outputDir, `video_${timestamp}.mp4`);
+    const imageFile = path.join(outputDir, `bg_${timestamp}.jpg`);
+
+    console.log("🗣️ 开始生成语音...");
+
+    // 使用 google-tts-api 生成语音
+    const url = googleTTS.getAudioUrl(text, {
+      lang: "zh",
+      slow: false,
+    });
+
+    const responseTTS = await fetch(url);
+    const audioBuffer = await responseTTS.arrayBuffer();
+    fs.writeFileSync(voiceFile, Buffer.from(audioBuffer));
+
+    console.log("✅ 语音生成完成");
+
+    // 使用 Pexels 图片 API 或静态图片背景
+    console.log("🖼️ 生成背景图片...");
+    const backgroundUrl =
+      "https://images.pexels.com/photos/91227/pexels-photo-91227.jpeg";
+    const imageRes = await fetch(backgroundUrl);
+    const imageBuffer = await imageRes.arrayBuffer();
+    fs.writeFileSync(imageFile, Buffer.from(imageBuffer));
+
+    console.log("✅ 背景生成完成");
+
+    // 用 FFmpeg 合成竖屏视频
+    console.log("🎬 正在合成视频...");
+    const ffmpegCmd = `ffmpeg -loop 1 -i ${imageFile} -i ${voiceFile} -c:v libx264 -c:a aac -b:a 192k -shortest -vf "scale=1080:1920,format=yuv420p" ${videoFile}`;
+
     await new Promise((resolve, reject) => {
-      speech.save(voiceFile, (err) => {
-        if (err) reject(err);
+      exec(ffmpegCmd, (error) => {
+        if (error) reject(error);
         else resolve();
       });
     });
 
-    // ffmpeg 合成视频
-    const ffmpegCmd = `
-      ffmpeg -loop 1 -i "${bgFile}" -i "${voiceFile}" \
-      -vf "subtitles=sub.srt:force_style='FontName=SimHei,FontSize=24,PrimaryColour=&HFFFFFF&'" \
-      -c:v libx264 -c:a aac -strict experimental -shortest "${outputFile}"
-    `;
-    await execAsync(ffmpegCmd);
+    console.log("✅ 视频生成成功");
 
     res.json({
       message: "✅ 视频生成成功！",
-      video_url: `${req.protocol}://${req.headers.host}/${path.basename(outputFile)}`,
+      video_url: `${req.protocol}://${req.get("host")}/${videoFile}`,
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+    console.error("❌ 生成失败：", err);
+    res.status(500).json({ error: "视频生成失败", details: err.message });
   }
 });
 
-// ⚡ 使用 Railway 提供的端口
-app.listen(process.env.PORT || 3000, () => {
-  console.log(`🎬 视频生成服务已启动在端口 ${process.env.PORT || 3000}`);
+// 让生成的视频可以直接访问
+app.use("/output", express.static("output"));
+
+app.listen(PORT, () => {
+  console.log(`🚀 服务器已启动在端口 ${PORT}`);
 });
