@@ -15,34 +15,36 @@ app.use(express.json());
 app.post("/generate", async (req, res) => {
   try {
     const text = req.body.text || "你好，这是一个测试视频。";
-    const bgUrl = "https://picsum.photos/720/1280"; // 随机背景
+    const bgUrl = "https://picsum.photos/720/1280";
     const bgFile = path.join(__dirname, "bg.jpg");
     const voiceFile = path.join(__dirname, "voice.mp3");
     const outputFile = path.join(__dirname, `video_${Date.now()}.mp4`);
 
-    // 下载背景图
+    // 下载图片
     const response = await fetch(bgUrl);
     const buffer = await response.arrayBuffer();
     fs.writeFileSync(bgFile, Buffer.from(buffer));
 
-    // 生成中文语音
+    // 生成语音
     const speech = new gtts(text, "zh");
     await new Promise((resolve, reject) => {
-      speech.save(voiceFile, err => (err ? reject(err) : resolve()));
+      speech.save(voiceFile, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
 
-    // 生成视频命令（竖屏+字幕）
+    // ffmpeg 合成视频
     const ffmpegCmd = `
-      ffmpeg -loop 1 -i ${bgFile} -i ${voiceFile} \
-      -vf "subtitles='sub.srt':force_style='FontName=SimHei,FontSize=24,PrimaryColour=&HFFFFFF&'" \
-      -t 20 -c:v libx264 -c:a aac -strict experimental -shortest ${outputFile}
+      ffmpeg -loop 1 -i "${bgFile}" -i "${voiceFile}" \
+      -vf "subtitles=sub.srt:force_style='FontName=SimHei,FontSize=24,PrimaryColour=&HFFFFFF&'" \
+      -c:v libx264 -c:a aac -strict experimental -shortest "${outputFile}"
     `;
-
     await execAsync(ffmpegCmd);
 
     res.json({
       message: "✅ 视频生成成功！",
-      video_url: `https://${process.env.RAILWAY_STATIC_URL || req.headers.host}/${path.basename(outputFile)}`
+      video_url: `${req.protocol}://${req.headers.host}/${path.basename(outputFile)}`,
     });
   } catch (err) {
     console.error(err);
@@ -50,4 +52,7 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-app.listen(3000, () => console.log("🎬 视频生成服务已启动 on port 3000"));
+// ⚡ 使用 Railway 提供的端口
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`🎬 视频生成服务已启动在端口 ${process.env.PORT || 3000}`);
+});
